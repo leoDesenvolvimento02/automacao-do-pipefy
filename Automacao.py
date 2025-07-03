@@ -2,6 +2,11 @@ import requests
 import json
 import pandas as pd
 import time
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.formatting.rule import ColorScaleRule, CellIsRule
+from openpyxl.styles.differential import DifferentialStyle
 TOKEN = "eyJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJQaXBlZnkiLCJpYXQiOjE3NTA0MTk3MTEsImp0aSI6IjkxNTU3NjM4LTAwZmMtNDJlYS05NDRjLWE5NWI3MTk2MGMxZCIsInN1YiI6MzA2NzM5NzE4LCJ1c2VyIjp7ImlkIjozMDY3Mzk3MTgsImVtYWlsIjoiZGVzZW52b2x2aW1lbnRvMkB0NXRlYy5jb20uYnIifX0.nTiOpnKPxH_E0YcMih3leVJUuaW9Fr6cq6Vr_jJ2IZeT61J2-0desMbdKW8O8A2Z_ta6Cgt1BtohpIvtj_x-1Q"  # Obtenha em: Pipefy > Perfil > API Tokens
 TABLE_ID = "304107875"
 def colocarMascara_cidade(cidade):
@@ -50,7 +55,7 @@ def consulta_numero_por_cnpj(cnpj):
 
         if data.get("ddd_telefone_2"):
             numero += ", " + colocarMascara_numero(data.get("ddd_telefone_2", ""))
-        print(f"Consulta realizada para CNPJ: {cnpj} - Telefone: {numero}")
+        
         return numero
     except requests.RequestException as e:
         print(f"Erro ao consultar CNPJ {cnpj}: {e}")
@@ -64,11 +69,98 @@ def consulta_socios_por_cnpj(cnpj):
         response.raise_for_status()
         data = response.json()
         socios = data.get("qsa", [])
-        print(f"Consulta realizada para CNPJ: {cnpj} - Sócios: {socios}")
+        
         return socios
     except requests.RequestException as e:
         print(f"Erro ao consultar CNPJ {cnpj}: {e}")
         return None
+
+
+
+
+
+def criar_excel_formatado(df, nome_arquivo="pipefy_records.xlsx"):
+    """Cria um arquivo Excel formatado com estilos profissionais"""
+    
+    # Criar workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Dados Pipefy"
+    
+    # Adicionar dados do DataFrame
+    for r in dataframe_to_rows(df, index=False, header=True):
+        ws.append(r)
+    
+    # Estilos para o cabeçalho
+    header_font = Font(name='Arial', size=12, bold=True, color='FFFFFF')
+    header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+    header_alignment = Alignment(horizontal='center', vertical='center',wrap_text=True)
+    
+    # Estilos para células de dados
+    data_font = Font(name='Arial', size=10)
+    data_alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+
+    # Bordas
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    # Aplicar formatação ao cabeçalho
+    for col in range(1, len(df.columns) + 1):
+        cell = ws.cell(row=1, column=col)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+    
+    # Aplicar formatação às células de dados
+    for row in range(2, len(df) + 2):
+        for col in range(1, len(df.columns) + 1):
+            cell = ws.cell(row=row, column=col)
+            cell.font = data_font
+            cell.alignment = data_alignment
+            cell.border = thin_border
+            
+            # Alternar cores das linhas (zebrado)
+            if row % 2 == 0:
+                cell.fill = PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
+    
+    # Ajustar largura das colunas automaticamente
+    for column in ws.columns:
+        max_length = 0
+        column_letter = column[0].column_letter
+        
+        for cell in column:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        
+        adjusted_width = min(max_length + 2, 50)  # Máximo de 50 caracteres
+        ws.column_dimensions[column_letter].width = adjusted_width
+    
+    # Congelar primeira linha (cabeçalho)
+    ws.freeze_panes = 'A2'
+    
+    # Adicionar filtros automáticos
+    ws.auto_filter.ref = ws.dimensions
+    
+    # Salvar arquivo
+    wb.save(nome_arquivo)
+    print(f"Arquivo Excel formatado salvo como {nome_arquivo}")
+
+def criar_excel_formatado_com_ordenacao(df, nome_arquivo="pipefy_records_ordenado.xlsx", coluna_ordenacao=None, ordem_crescente=True):
+    """Cria um arquivo Excel formatado e ordenado"""
+    
+    # Ordenar DataFrame se coluna de ordenacao for especificada
+    if coluna_ordenacao and coluna_ordenacao in df.columns:
+        df = df.sort_values(by=coluna_ordenacao, ascending=ordem_crescente)
+    
+    criar_excel_formatado(df, nome_arquivo)
 
 def get_all_records():
     url = "https://api.pipefy.com/graphql"
@@ -130,9 +222,8 @@ def get_all_records():
             break
             
         cursor = page_info["endCursor"]
-        #if( page_count == 2):
-        #    break  # Para teste, remova essa linha para obter todos os registros
-       
+        # if( page_count == 2):
+        #     break  # Para teste, remova essa linha para obter todos os registros
 
     print(f"\nTotal de registros obtidos: {len(all_records)}")
 
@@ -145,16 +236,32 @@ def get_all_records():
     # Transformar em tabela para Excel apenas com campos desejados
     campos_desejados = [
         'cnpj',
-        'cidade'
+        'cidade',
+        'situação cadastro',
     ]
     records_flat = []
     consulta_realizada = False
     for record in all_records:
+        # Verificar se o registro é inativo antes de processar
+        situacao_cadastro = None
+        if 'record_fields' in record:
+            for field in record['record_fields']:
+                if field['name'].strip().lower() == 'situação cadastro':
+                    situacao_cadastro = field['value']
+                    break
+        
+        # Pular registros inativos
+        if situacao_cadastro and 'inativo' in str(situacao_cadastro).lower():
+           
+            continue
+        
         flat = {}
         flat['Cliente'] = record.get('title', '')
         cnpj_valor = None
         if 'record_fields' in record:
+
             for field in record['record_fields']:
+               
                 nome = field['name'].strip().lower()
                 if nome in campos_desejados:
                     if nome == 'cnpj':
@@ -172,20 +279,23 @@ def get_all_records():
             flat['Telefones'] = colocarMascara_numero(telefone)
             if socios:
                 nomes_socios = [s.get("nome_socio", "") for s in socios]
-                flat['sócios'] = ", ".join(nomes_socios)
+                flat['Sócios'] = ", ".join(nomes_socios)
             else:
-                flat['sócios'] = ""
+                flat['Sócios'] = ""
         else:
             flat['Telefones'] = ""
-            flat['sócios'] = ""
+            flat['Sócios'] = ""
 
         records_flat.append(flat)
 
     df = pd.DataFrame(records_flat)
-    df.to_excel("pipefy_records.xlsx", index=False)
-    print("Arquivo Excel salvo como pipefy_records.xlsx (apenas campos selecionados)")
+    
+    # Criar Excel formatado simples
+    criar_excel_formatado_com_ordenacao(df, nome_arquivo="pipefy_records_formatado.xlsx", coluna_ordenacao='Cliente', ordem_crescente=True)
+    
+    print("Arquivo Excel formatado salvo como pipefy_records_formatado.xlsx (apenas campos selecionados)")
     return all_records
 
 # Executar
 if __name__ == "__main__":
-   get_all_records()
+  get_all_records()
