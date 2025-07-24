@@ -43,7 +43,8 @@ def colocarMascara_cnpj(cnpj):
     else:
         return cnpj  # Retorna sem máscara se não tiver 14 dígitos
 def consulta_numero_por_cnpj(cnpj):
-    
+    if(cnpj is None or cnpj.strip() == ''):
+        return None
     cnpj_limpo = cnpj.strip().replace('.', '').replace('/', '').replace('-', '')
     url = f"https://minhareceita.org/{cnpj_limpo}"
     try:
@@ -69,12 +70,48 @@ def consulta_socios_por_cnpj(cnpj):
         response.raise_for_status()
         data = response.json()
         socios = data.get("qsa", [])
+        valor = ''
+        if socios:
+            if isinstance(socios, list):
+                socios_formatados = []
+                for socio in socios:
+                    nome = socio.get('nome', '').strip()
+                    qualificacao = socio.get('qualificacao', '').strip()
+                    if nome:
+                        if qualificacao:
+                            socios_formatados.append(f"{nome} ({qualificacao})")
+                        else:
+                            socios_formatados.append(f"{nome}")
+                valor = ', '.join(socios_formatados)
+            else:
+                valor = str(socios)
+            if not valor:
+                valor = 'Nenhum sócio encontrado'
+        else:
+            valor = 'Nenhum sócio encontrado'
         
-        return socios
+        return valor
+    except requests.RequestException as e:
+        print(f"Erro ao consultar CNPJ {cnpj}: {e}")
+        return []
+def consulta_cnpj(cnpj, campos_desejados=None):
+  
+    cnpj_limpo = cnpj.strip().replace('.', '').replace('/', '').replace('-', '')
+    url = f"https://minhareceita.org/{cnpj_limpo}"
+    
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        
+        if campos_desejados:
+            
+            return {campo: data.get(campo) for campo in campos_desejados}
+        print("data", data)
+        return data
     except requests.RequestException as e:
         print(f"Erro ao consultar CNPJ {cnpj}: {e}")
         return None
-
 
 
 
@@ -222,8 +259,8 @@ def get_all_records():
             break
             
         cursor = page_info["endCursor"]
-        # if( page_count == 2):
-        #     break  # Para teste, remova essa linha para obter todos os registros
+        if( page_count == 2):
+             break  # Para teste, remova essa linha para obter todos os registros
 
     print(f"\nTotal de registros obtidos: {len(all_records)}")
 
@@ -239,6 +276,43 @@ def get_all_records():
         'cidade',
         'situação cadastro',
     ]
+
+    campos_desejados_da_busca_cnpj = [
+        'uf',
+        'cep',
+        'email',
+        'porte',
+        'cnae_fiscal',
+        'opcao_pelo_mei',
+        'regime_tributario',
+        'opcao_pelo_simples',
+        'cnae_fiscal_descricao',
+        'data_inicio_atividade',
+        'data_opcao_pelo_simples',
+        'qsa',
+        'cnaes_secundarios',  # Lista de sócios
+    ]
+    # Mapeamento para nomes bonitos no Excel
+    campos_nomes_bonitos = {
+        'cnpj': 'CNPJ',
+        'cidade': 'Cidade',
+        'situação cadastro': 'Situação Cadastro',
+        'uf': 'UF',
+        'cep': 'CEPs',
+        'email': 'E-mail',
+        'porte': 'Porte',
+        'cnae_fiscal': 'CNAE Fiscal',
+        'opcao_pelo_mei': 'Opção pelo MEI',
+        'regime_tributario': 'Regime Tributário',
+        'opcao_pelo_simples': 'Opção pelo Simples',
+        'cnae_fiscal_descricao': 'Descrição CNAE Fiscal',
+        'data_inicio_atividade': 'Data Início Atividade',
+        'data_opcao_pelo_simples': 'Data Opção pelo Simples',
+        'qsa': 'Sócios',
+        'cnaes_secundarios': 'CNAEs Secundários',
+        'telefone': 'Telefone',
+    }
+    
     records_flat = []
     consulta_realizada = False
     for record in all_records:
@@ -259,14 +333,16 @@ def get_all_records():
         flat['Cliente'] = record.get('title', '')
         cnpj_valor = None
         if 'record_fields' in record:
-
             for field in record['record_fields']:
-               
                 nome = field['name'].strip().lower()
                 if nome in campos_desejados:
                     if nome == 'cnpj':
-                        flat[field['name']] = colocarMascara_cnpj(field['value'])
-                        cnpj_valor = field['value']
+                        if field['value'] and str(field['value']).strip():
+                            flat[field['name']] = colocarMascara_cnpj(field['value'])
+                            cnpj_valor = field['value']
+                        else:
+                            flat[field['name']] = "CNPJ não informado"
+                            cnpj_valor = None
                     elif nome == 'cidade':
                         flat[field['name']] = colocarMascara_cidade(field['value'])
                     else:
@@ -274,21 +350,65 @@ def get_all_records():
 
         # Consulta telefone e sócios pelo CNPJ para cada registro
         if cnpj_valor:
+            todosValores = consulta_cnpj(cnpj_valor, campos_desejados=campos_desejados_da_busca_cnpj)
+            if not isinstance(todosValores, dict):
+                todosValores = {}
+            for campo in campos_desejados_da_busca_cnpj:
+                valor = todosValores.get(campo, '')
+                if campo == 'qsa':
+                    socios = valor if isinstance(valor, list) else []
+                    if socios:
+                        socios_formatados = []
+                        for socio in socios:
+                            nome = socio.get('nome_socio', '').strip()
+                            qualificacao = socio.get('qualificacao_socio', '').strip()
+                            if nome:
+                                if qualificacao:
+                                    socios_formatados.append(f"{nome} ({qualificacao})")
+                                else:
+                                    socios_formatados.append(f"{nome}")
+                        valor_socios = ', '.join(socios_formatados)
+                        if not valor_socios:
+                            valor_socios = 'Nenhum sócio encontrado'
+                    else:
+                        valor_socios = 'Nenhum sócio encontrado'
+                    flat[campos_nomes_bonitos.get(campo, campo)] = valor_socios
+                elif campo == 'cnaes_secundarios':
+                    if isinstance(valor, list):
+                        cnaes_formatados = []
+                        for cnae in valor:
+                            print({cnpj_valor})
+                            codigo = str(cnae.get('codigo','')).strip()
+                            print({codigo})
+                            descricao = cnae.get('descricao','').strip()
+                            print({descricao})
+                            if codigo and descricao:
+                                cnaes_formatados.append(f"{codigo} - {descricao}")
+                        valor_cnaes = ','.join(cnaes_formatados)
+                    flat[campos_nomes_bonitos.get(campo, campo)] = valor_cnaes
+                else:
+                    if isinstance(valor, (list, dict)):
+                        valor = json.dumps(valor, ensure_ascii=False)
+                    flat[campos_nomes_bonitos.get(campo, campo)] = valor
+            # Consulta telefone
             telefone = consulta_numero_por_cnpj(cnpj_valor)
-            socios = consulta_socios_por_cnpj(cnpj_valor)
-            flat['Telefones'] = colocarMascara_numero(telefone)
-            if socios:
-                nomes_socios = [s.get("nome_socio", "") for s in socios]
-                flat['Sócios'] = ", ".join(nomes_socios)
+            if telefone:
+                flat['Telefone'] = telefone
             else:
-                flat['Sócios'] = ""
+                flat['Telefone'] = 'Não encontrado'
         else:
-            flat['Telefones'] = ""
-            flat['Sócios'] = ""
-
+            flat['Telefone'] = 'Não encontrado'
+            
+        for campo in ['cnpj', 'cidade', 'situação cadastro']:
+            if campo not in flat:
+                flat[campo] = "Não informado"
         records_flat.append(flat)
 
-    df = pd.DataFrame(records_flat)
+    
+    # Usar nomes bonitos como colunas, se existirem
+
+    colunas_bonitas = ['Cliente'] + ['Telefone'] + ['CNPJ'] + ['Situação Cadastro'] + ['Cidade'] + [campos_nomes_bonitos.get(c, c) for c in campos_desejados_da_busca_cnpj]
+    df = pd.DataFrame(records_flat, columns=colunas_bonitas)
     
     # Criar Excel formatado simples
     criar_excel_formatado_com_ordenacao(df, nome_arquivo="pipefy_records_formatado.xlsx", coluna_ordenacao='Cliente', ordem_crescente=True)
